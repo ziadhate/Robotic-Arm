@@ -17,27 +17,29 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 # ---------------- Serial Manager ----------------
-# This class manages the communication with the Arduino (over USB or Bluetooth).
-# It allows connecting, disconnecting, and sending angles in a thread-safe way.
 class SerialManager:
+    """
+    Manages Serial Communication with Arduino.
+    Can connect, disconnect, and send joint angles.
+    Thread-safe using a lock.
+    """
     def __init__(self, port=None, baud=9600):
-        """
-        Initialize SerialManager with optional COM port and baud rate.
-        Uses threading.Lock for thread-safe access.
-        """
-        self.port = port          # COM port string (e.g., "COM7")
-        self.baud = baud          # Baud rate (default 9600)
-        self.lock = threading.Lock()  # Ensures thread-safe operations
-        self.ser = None           # Serial object
+        self.port = port
+        self.baud = baud
+        self.lock = threading.Lock()  # Ensures thread-safe serial access
+        self.ser = None
         if port:
-            self.connect(port)    # Connect immediately if port is given
+            self.connect(port)
 
     def connect(self, port):
-        """Connect to the specified COM port. Returns (success, message)."""
+        """
+        Connect to Arduino on given COM port.
+        Returns (success, message).
+        """
         try:
             with self.lock:
                 if self.ser and self.ser.is_open:
-                    self.ser.close()  # Close existing connection if any
+                    self.ser.close()
                 self.ser = serial.Serial(port, self.baud, timeout=0.5)
                 self.port = port
             return True, f"Connected {port}"
@@ -46,7 +48,9 @@ class SerialManager:
             return False, str(e)
 
     def disconnect(self):
-        """Close the serial connection safely."""
+        """
+        Safely disconnect from Arduino.
+        """
         with self.lock:
             if self.ser:
                 try:
@@ -59,9 +63,7 @@ class SerialManager:
     def send_angles(self, angles):
         """
         Send a list of 6 joint angles to Arduino.
-        Format: "a1,a2,a3,a4,a5,a6\n"
-        Thread-safe and non-blocking.
-        Returns (success, message).
+        Returns (success, message)
         """
         if not self.ser:
             return False, "Not connected"
@@ -75,51 +77,47 @@ class SerialManager:
 
 
 # ---------------- Kinematics ----------------
-# Handles forward kinematics calculations for a 6-DOF robotic arm.
 class ArmKinematics:
+    """
+    Simple forward kinematics for a 4-link robotic arm.
+    Calculates X,Y,Z positions of each joint based on angles.
+    """
     def __init__(self, link_lengths=None):
-        """
-        Initialize ArmKinematics with link lengths.
-        Default lengths (in mm): base->shoulder, upper arm, forearm, wrist
-        """
         if link_lengths is None:
-            link_lengths = [80, 100, 90, 50]
+            link_lengths = [80, 100, 90, 50]  # Default link lengths in mm
         self.link_lengths = link_lengths
 
     def forward(self, angles_deg):
         """
-        Compute the 3D coordinates (x,y,z) of all joints given joint angles in degrees.
-        Uses basic trigonometry and planar rotation formulas.
-        Returns arrays xs, ys, zs representing positions of joints from base to end-effector.
+        Compute forward kinematics.
+        angles_deg: list of joint angles in degrees [base, th1, th2, th3, th4, th5]
+        Returns arrays xs, ys, zs of joint positions.
         """
-        a = np.radians(angles_deg)       # Convert degrees to radians
-        th_base, th1, th2, th3, th4 = a[:5]  # First 5 joint angles
+        a = np.radians(angles_deg)  # convert degrees to radians
+        th_base, th1, th2, th3, th4 = a[:5]
         L1, L2, L3, L4 = self.link_lengths
 
-        points = [(0, 0, 0)]  # Base position at origin
+        points = [(0, 0, 0)]  # base point
 
-        # Compute position of joint 1
+        # Compute each joint position using planar kinematics + base rotation
         r1 = L1*np.cos(th1)
         z1 = L1*np.sin(th1)
         x1 = r1*np.cos(th_base)
         y1 = r1*np.sin(th_base)
         points.append((x1, y1, z1))
 
-        # Compute joint 2
         r2 = r1 + L2*np.cos(th1+th2)
         z2 = z1 + L2*np.sin(th1+th2)
         x2 = r2*np.cos(th_base)
         y2 = r2*np.sin(th_base)
         points.append((x2, y2, z2))
 
-        # Compute joint 3
         r3 = r2 + L3*np.cos(th1+th2+th3)
         z3 = z2 + L3*np.sin(th1+th2+th3)
         x3 = r3*np.cos(th_base)
         y3 = r3*np.sin(th_base)
         points.append((x3, y3, z3))
 
-        # Compute wrist/end-effector
         r4 = r3 + L4*np.cos(th1+th2+th3+th4)
         z4 = z3 + L4*np.sin(th1+th2+th3+th4)
         x4 = r4*np.cos(th_base)
@@ -131,65 +129,72 @@ class ArmKinematics:
 
 
 # ---------------- Custom Qt Events ----------------
-# Allows safely updating GUI from threads
 class _AngUpdateEvent(QEvent):
+    """
+    Custom event to update angles in GUI from threads.
+    """
     TYPE = QEvent.Type(QEvent.registerEventType())
     def __init__(self, angles):
         super().__init__(self.TYPE)
-        self.angles = angles  # New joint angles to update
+        self.angles = angles
 
 class _PauseButtonResetEvent(QEvent):
+    """
+    Custom event to reset pause button after sequence playback ends.
+    """
     TYPE = QEvent.Type(QEvent.registerEventType())
     def __init__(self):
         super().__init__(self.TYPE)
 
 
 # ---------------- GUI ----------------
-# Main application GUI for controlling the robotic arm
 class ProArmGUI(QWidget):
+    """
+    Main GUI for controlling robotic arm.
+    Includes sliders, spin boxes, plotting, serial management, and sequence playback.
+    """
     def __init__(self):
         super().__init__()
         self.setWindowTitle("FABRI CREATOR - PRO (Stable)")
         self.resize(1100, 700)
 
-        # Serial and kinematics
-        self.serial = SerialManager(None, 9600)
-        self.kin = ArmKinematics()
+        self.serial = SerialManager(None, 9600)  # Serial manager instance
+        self.kin = ArmKinematics()               # Kinematics instance
 
-        # Arm state variables
-        self.angles = [90]*6           # Current joint angles
-        self.sequence = []             # Sequence of steps
-        self.playing = False           # Playback status
+        self.angles = [90]*6  # Initial joint angles
+        self.sequence = []    # Recorded sequence steps
+        self.playing = False
         self.pause_flag = False
         self.stop_flag = False
 
-        # Throttle pending sends to Arduino
         self.pending_send = False
         self.pending_angles = self.angles.copy()
 
-        # Build all UI components
-        self._build_ui()
+        self._build_ui()  # Build all GUI components
 
-        # Timer to continuously redraw the 3D arm plot (~25 fps)
+        # Timer to redraw plot periodically
         self.redraw_timer = QTimer()
         self.redraw_timer.setInterval(40)
         self.redraw_timer.timeout.connect(self.redraw_plot)
         self.redraw_timer.start()
 
-        # Timer to throttle serial sends (max 20 Hz)
+        # Timer to flush pending serial sends
         self.send_timer = QTimer()
         self.send_timer.setInterval(50)
         self.send_timer.timeout.connect(self._flush_send)
         self.send_timer.start()
 
+
     # ---------------- Build UI ----------------
     def _build_ui(self):
-        """Create all GUI elements and layout."""
+        """
+        Build all GUI widgets: sliders, buttons, plot, and layouts.
+        """
         main_layout = QHBoxLayout(self)
         ctrl_layout = QVBoxLayout()
         main_layout.addLayout(ctrl_layout, 0)
 
-        # Serial port input
+        # COM Port input and connect button
         h = QHBoxLayout()
         self.port_input = QLineEdit()
         self.port_input.setPlaceholderText("COM port (e.g., COM7)")
@@ -199,7 +204,7 @@ class ProArmGUI(QWidget):
         h.addWidget(self.connect_btn)
         ctrl_layout.addLayout(h)
 
-        # Sliders and SpinBoxes for each joint
+        # Joint sliders and spinboxes
         self.sliders = []
         for i in range(6):
             lbl = QLabel(f"Joint {i+1}")
@@ -209,7 +214,8 @@ class ProArmGUI(QWidget):
             spin = QSpinBox()
             spin.setRange(0,180)
             spin.setValue(self.angles[i])
-            # Link slider and spinbox
+
+            # Connect slider and spinbox signals
             slider.valueChanged.connect(partial(self.on_slider_change,i))
             slider.valueChanged.connect(spin.setValue)
             spin.valueChanged.connect(slider.setValue)
@@ -221,7 +227,7 @@ class ProArmGUI(QWidget):
             ctrl_layout.addLayout(row)
             self.sliders.append((slider,spin))
 
-        # Smooth motion controls (interpolation)
+        # Smooth motion options
         smooth_row = QHBoxLayout()
         self.smooth_chk = QCheckBox("Smooth")
         self.smooth_chk.setChecked(True)
@@ -238,7 +244,7 @@ class ProArmGUI(QWidget):
         smooth_row.addWidget(self.step_delay)
         ctrl_layout.addLayout(smooth_row)
 
-        # Sequence buttons (record / clear)
+        # Sequence buttons: record and clear
         seq_row = QHBoxLayout()
         self.record_btn = QPushButton("Record Step")
         self.record_btn.clicked.connect(self.record_step)
@@ -248,11 +254,11 @@ class ProArmGUI(QWidget):
         seq_row.addWidget(self.clear_seq_btn)
         ctrl_layout.addLayout(seq_row)
 
-        # Sequence display list
+        # Sequence list display
         self.seq_list = QListWidget()
         ctrl_layout.addWidget(self.seq_list)
 
-        # File operations (save/load sequences)
+        # Save/Load buttons
         file_row = QHBoxLayout()
         self.save_btn = QPushButton("Save Seq")
         self.save_btn.clicked.connect(self.save_sequence)
@@ -262,7 +268,7 @@ class ProArmGUI(QWidget):
         file_row.addWidget(self.load_btn)
         ctrl_layout.addLayout(file_row)
 
-        # Playback controls
+        # Playback buttons: play, pause, stop
         play_row = QHBoxLayout()
         self.play_btn = QPushButton("Play")
         self.play_btn.clicked.connect(self.play_sequence)
@@ -275,7 +281,7 @@ class ProArmGUI(QWidget):
         play_row.addWidget(self.stop_btn)
         ctrl_layout.addLayout(play_row)
 
-        # Immediate action buttons
+        # Extra buttons: send now, reset, home
         extra_row = QHBoxLayout()
         self.send_btn = QPushButton("Send Now")
         self.send_btn.clicked.connect(self.send_now_manual)
@@ -288,12 +294,12 @@ class ProArmGUI(QWidget):
         extra_row.addWidget(self.home_btn)
         ctrl_layout.addLayout(extra_row)
 
-        # Status label at bottom
+        # Status label
         self.status_lbl = QLabel("Disconnected")
         ctrl_layout.addWidget(self.status_lbl)
         ctrl_layout.addStretch(1)
 
-        # 3D Arm plot
+        # Plot area
         plot_layout = QVBoxLayout()
         main_layout.addLayout(plot_layout, 1)
         self.fig = Figure(figsize=(6,6))
@@ -305,7 +311,9 @@ class ProArmGUI(QWidget):
 
     # ---------------- Serial / UI Handlers ----------------
     def handle_connect(self):
-        """Handle Connect button click."""
+        """
+        Connect to COM port when Connect button clicked.
+        """
         port = self.port_input.text().strip()
         if not port:
             QMessageBox.warning(self, "Port required", "Enter COM port (e.g., COM7)")
@@ -321,52 +329,63 @@ class ProArmGUI(QWidget):
             self.status_lbl.setText("Connect failed")
 
     def handle_disconnect(self):
-        """Handle Disconnect button click."""
+        """
+        Disconnect when Disconnect button clicked.
+        """
         self.serial.disconnect()
         self.status_lbl.setText("Disconnected")
         self.connect_btn.setText("Connect")
         self.connect_btn.clicked.disconnect()
         self.connect_btn.clicked.connect(self.handle_connect)
 
-
     # ---------------- Angle Change Handlers ----------------
     def on_slider_change(self, idx, value):
-        """Update angle when slider moves."""
         self.update_angle(idx, value)
 
     def on_spin_change(self, idx, value):
-        """Update angle when spinbox changes."""
         self.update_angle(idx, value)
 
     def update_angle(self, idx, value):
         """
-        Update angle array, mark pending for throttled send.
-        The actual send occurs in _flush_send().
+        Update internal angle array when slider or spinbox changed.
         """
+        if idx == 3:  # special scale for joint 4
+            value = int(value * 0.4)
         self.angles[idx] = int(value)
         self.pending_angles = self.angles.copy()
         self.pending_send = True
 
+    # --------------- Updated Serial Send in Thread ----------------
     def _flush_send(self):
-        """Timer callback to send angles if pending and not playing a sequence."""
+        """
+        Periodically called to send pending angles without blocking GUI.
+        """
         if self.pending_send and not self.playing:
             self.pending_send = False
-            ok, msg = self.serial.send_angles(self.pending_angles)
-            if not ok:
-                self.status_lbl.setText(f"Send failed: {msg}")
-            else:
-                self.status_lbl.setText(f"Sent: {msg}")
+            threading.Thread(target=self._send_thread, args=(self.pending_angles.copy(),), daemon=True).start()
 
     def send_now_manual(self):
-        """Send current angles immediately, bypassing throttle."""
-        ok, msg = self.serial.send_angles(self.angles)
+        """
+        Send angles immediately when button clicked.
+        """
+        threading.Thread(target=self._send_thread, args=(self.angles.copy(),), daemon=True).start()
+
+    def _send_thread(self, angles_to_send):
+        """
+        Actual thread function to send angles to Arduino.
+        Updates status label.
+        """
+        ok, msg = self.serial.send_angles(angles_to_send)
         if not ok:
             self.status_lbl.setText(f"Send failed: {msg}")
         else:
             self.status_lbl.setText(f"Sent: {msg}")
 
+    # ---------------- Reset/Home ----------------
     def reset_angles(self):
-        """Reset all angles to 90 degrees (neutral pose)."""
+        """
+        Reset all joints to 90 degrees.
+        """
         self.angles = [90]*6
         for s, spin in self.sliders:
             s.blockSignals(True)
@@ -379,7 +398,9 @@ class ProArmGUI(QWidget):
         self.pending_send = True
 
     def home_angles(self):
-        """Move arm to predefined home position (custom configuration)."""
+        """
+        Set joints to predefined home positions.
+        """
         home = [90,100,60,120,90,60]
         self.angles = home.copy()
         for i, (s, spin) in enumerate(self.sliders):
@@ -392,21 +413,26 @@ class ProArmGUI(QWidget):
         self.pending_angles = self.angles.copy()
         self.pending_send = True
 
-
     # ---------------- Sequence Functions ----------------
     def record_step(self):
-        """Record current angles to the sequence list."""
+        """
+        Record current angles into sequence list.
+        """
         ang = self.angles.copy()
         self.sequence.append(ang)
         self.seq_list.addItem(",".join(str(a) for a in ang))
 
     def clear_sequence(self):
-        """Clear all recorded sequence steps."""
+        """
+        Clear recorded sequence.
+        """
         self.sequence = []
         self.seq_list.clear()
 
     def save_sequence(self):
-        """Save sequence to JSON file."""
+        """
+        Save sequence to JSON file.
+        """
         if not self.sequence:
             QMessageBox.information(self, "Empty", "No sequence")
             return
@@ -416,7 +442,9 @@ class ProArmGUI(QWidget):
             QMessageBox.information(self, "Saved", f"{len(self.sequence)} steps")
 
     def load_sequence(self):
-        """Load sequence from JSON file."""
+        """
+        Load sequence from JSON file.
+        """
         fname, _ = QFileDialog.getOpenFileName(self, "Load Sequence", "", "JSON Files (*.json)")
         if fname:
             seq = json.load(open(fname, "r"))
@@ -425,10 +453,11 @@ class ProArmGUI(QWidget):
             for s in seq:
                 self.seq_list.addItem(",".join(str(int(x)) for x in s))
 
-
     # ---------------- Playback ----------------
     def play_sequence(self):
-        """Start playing recorded sequence in a separate thread."""
+        """
+        Start playback of recorded sequence in a separate thread.
+        """
         if not self.sequence or self.playing:
             return
         self.playing = True
@@ -437,17 +466,23 @@ class ProArmGUI(QWidget):
         threading.Thread(target=self._play_thread, daemon=True).start()
 
     def pause_sequence(self):
-        """Toggle pause/resume state."""
+        """
+        Toggle pause/resume during playback.
+        """
         self.pause_flag = not self.pause_flag
         self.pause_btn.setText("Resume" if self.pause_flag else "Pause")
 
     def stop_sequence(self):
-        """Stop sequence playback."""
+        """
+        Stop playback immediately.
+        """
         self.stop_flag = True
         self.playing = False
 
     def _play_thread(self):
-        """Thread function to play the sequence smoothly."""
+        """
+        Thread function to playback sequence with optional smoothing.
+        """
         steps = self.sequence.copy()
         idx = 0
         while not self.stop_flag and self.playing and idx < len(steps):
@@ -462,22 +497,22 @@ class ProArmGUI(QWidget):
                     frac = tstep / steps_count
                     interp = [self.angles[i] + (target[i] - self.angles[i]) * frac for i in range(6)]
                     QApplication.instance().postEvent(self, _AngUpdateEvent(interp))
-                    self.serial.send_angles(interp)
+                    threading.Thread(target=self._send_thread, args=(interp,), daemon=True).start()
                     time.sleep(self.step_delay.value() / 1000.0)
-            # Finalize to target
             self.angles = target.copy()
             QApplication.instance().postEvent(self, _AngUpdateEvent(self.angles))
-            self.serial.send_angles(self.angles)
+            threading.Thread(target=self._send_thread, args=(self.angles.copy(),), daemon=True).start()
             time.sleep(self.step_delay.value() / 1000.0)
             idx += 1
         self.playing = False
         self.pause_flag = False
         QApplication.instance().postEvent(self, _PauseButtonResetEvent())
 
-
     # ---------------- Plot ----------------
     def redraw_plot(self):
-        """Redraw 3D plot of the robotic arm based on current angles."""
+        """
+        Redraw 3D arm plot based on current joint angles.
+        """
         self.ax.cla()
         xs, ys, zs = self.kin.forward(self.angles)
         self.ax.plot(xs, ys, zs, "-o", linewidth=3, markersize=6)
@@ -491,7 +526,9 @@ class ProArmGUI(QWidget):
         self.canvas.draw_idle()
 
     def customEvent(self, event):
-        """Handle custom Qt events from worker threads."""
+        """
+        Handle custom Qt events: update angles and reset pause button.
+        """
         if isinstance(event, _AngUpdateEvent):
             vals = event.angles
             self.angles = [int(round(x)) for x in vals]
@@ -509,11 +546,12 @@ class ProArmGUI(QWidget):
 
 # ---------------- Run Application ----------------
 def main():
-    """Entry point to launch GUI application."""
+    """
+    Run the PySide6 GUI application.
+    """
     app = QApplication(sys.argv)
     w = ProArmGUI()
     w.show()
-    # Ensure serial port is closed on exit
     app.aboutToQuit.connect(lambda: w.serial.disconnect())
     sys.exit(app.exec())
 

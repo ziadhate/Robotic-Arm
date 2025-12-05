@@ -49,3 +49,43 @@ The system allows:
 ### **1. Install Dependencies**
 ```bash
 pip install PySide6 pyqtgraph matplotlib numpy opencv-python pyserial
+
+
+
+
+flowchart TD
+
+A[Start Program] --> B[Initialize GUI + Serial Manager]
+B --> C[User Selects COM Port]
+C -->|Connect| D[Open Serial Port]
+C -->|Skip| E[Simulation Mode]
+
+D --> F[Update Angles from Sliders/Spinboxes]
+E --> F
+
+F --> G[Update 3D Kinematic Plot]
+G --> H{User Records Steps?}
+H -->|Yes| I[Save Step to Sequence]
+H -->|No| G
+
+I --> J{User Plays Sequence?}
+J -->|Yes| K[Interpolation + Send Angles Smoothly]
+J -->|No| G
+
+K --> L{Paused?}
+L -->|Yes| L
+L -->|No| K
+
+K --> M{Stopped?}
+M -->|Yes| G
+M -->|No| K
+
+%% COMPUTER VISION BRANCH
+A --> CV1[Start CV Script]
+CV1 --> CV2[Camera Calibrate Surface (4 Clicks)]
+CV2 --> CV3[Click Zero Position]
+CV3 --> CV4[Detect Red Object]
+CV4 --> CV5[Map Object to Robot Coordinates]
+CV5 --> CV6[Send Coordinates/Angles to Robot]
+CV6 --> CV4
+

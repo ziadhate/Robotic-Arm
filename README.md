@@ -44,16 +44,7 @@ The system allows:
 
 ---
 
-# 🛠️ Installation
-
-### **1. Install Dependencies**
-```bash
-pip install PySide6 pyqtgraph matplotlib numpy opencv-python pyserial
-
-
-
-
-flowchart TD
+###flowchart TD
 
 A[Start Program] --> B[Initialize GUI + Serial Manager]
 B --> C[User Selects COM Port]
@@ -88,4 +79,17 @@ CV3 --> CV4[Detect Red Object]
 CV4 --> CV5[Map Object to Robot Coordinates]
 CV5 --> CV6[Send Coordinates/Angles to Robot]
 CV6 --> CV4
+
+
+
+
+
+# 🛠️ Installation
+
+### **1. Install Dependencies**
+```bash
+pip install PySide6 pyqtgraph matplotlib numpy opencv-python pyserial
+
+
+
 

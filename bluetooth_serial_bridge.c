@@ -1,127 +1,89 @@
-#include <Servo.h>
-#include <SoftwareSerial.h>
+#include <Servo.h>           // Library for controlling servo motors
+#include <SoftwareSerial.h>  // Library to create additional Serial (for Bluetooth, etc.)
 
-// ===== Servo objects =====
-// Create Servo objects for each joint of the robotic arm
-Servo servo1;
-Servo servo2;
-Servo servo3;
-Servo servo4;
-Servo servo5;
-Servo servo6;
+// ====== SERVOS ======
+Servo s1;  // Servo for joint 1
+Servo s2;  // Servo for joint 2
+Servo s3;  // Servo for joint 3
+Servo s4;  // Servo for joint 4
+Servo s5;  // Servo for joint 5
+Servo s6;  // Servo for joint 6
 
-// ===== Bluetooth HC-05 =====
-// Set up SoftwareSerial on pins 10 (RX) and 11 (TX) for HC-05
-SoftwareSerial BT(10, 11);  // RX, TX
+// ====== VARIABLES ======
+int angles[6];     // Array to store the received angles for each servo
+String input = ""; // String to accumulate incoming data before parsing
 
-// ===== Servo angle limits =====
-// Ensures servos do not move outside safe range
-int minAngle = 0;
-int maxAngle = 180;
-
-// ===== Input buffer =====
-// Stores incoming serial data line by line
-String inputString = "";
+// ====== Bluetooth RX/TX ======
+#define RX_PIN 2      // Pin for receiving data from Bluetooth
+#define TX_PIN 12     // Pin for sending data to Bluetooth (different from 11 to avoid conflict with Servo 6)
+SoftwareSerial BT(RX_PIN, TX_PIN); // Create a new SoftwareSerial for Bluetooth
 
 void setup() {
-  // Initialize USB serial
-  Serial.begin(115200);
-  // Initialize Bluetooth serial
-  BT.begin(9600);   // HC-05 default baud rate
+  Serial.begin(9600); // Initialize USB Serial communication (optional)
+  BT.begin(9600);     // Initialize Bluetooth communication at 9600 baud
 
-  // Attach each servo to its corresponding pin
-  servo1.attach(3);
-  servo2.attach(5);
-  servo3.attach(6);
-  servo4.attach(9);
-  servo5.attach(10);
-  servo6.attach(11);
+  // Attach servos to PWM pins
+  s1.attach(3);
+  s2.attach(5);
+  s3.attach(6);
+  s4.attach(9);
+  s5.attach(10);
+  s6.attach(11);
 
-  // Set all servos to initial "neutral" position (90°)
-  servo1.write(90);
-  servo2.write(90);
-  servo3.write(90);
-  servo4.write(90);
-  servo5.write(90);
-  servo6.write(90);
-
-  // Print startup messages to Serial Monitor and Bluetooth
-  Serial.println("Arduino ready. Waiting for 6 angles...");
-  BT.println("Bluetooth ready. Waiting for 6 angles...");
+  // Indicate system is ready
+  Serial.println("READY");  
+  BT.println("READY");
 }
 
 void loop() {
-  // ===== Read data from USB =====
-  if (Serial.available()) {
-    char c = Serial.read();  // Read one character at a time
-    if (c == '\n') {         // End of line received
-      processInput(inputString);  // Process the full line
-      inputString = "";           // Clear buffer for next line
+  // ===== Read data from USB Serial =====
+  while (Serial.available()) {   // While data is available
+    char c = Serial.read();      // Read one character
+    if (c == '\n') {             // If newline character is received
+      parseAngles(input);        // Parse the string into angles
+      input = "";                // Reset the input string for the next message
     } else {
-      inputString += c;           // Append character to buffer
+      input += c;                // Append character to the input string
     }
   }
 
-  // ===== Read data from Bluetooth =====
-  if (BT.available()) {
-    char c = BT.read();      // Read one character at a time
-    if (c == '\n') {         // End of line received
-      processInput(inputString);  // Process the full line
-      inputString = "";           // Clear buffer for next line
+  // ===== Read data from Bluetooth Serial =====
+  while (BT.available()) {       // While data is available from Bluetooth
+    char c = BT.read();          // Read one character
+    if (c == '\n') {             // If newline character is received
+      parseAngles(input);        // Parse the string into angles
+      input = "";                // Reset input string
     } else {
-      inputString += c;           // Append character to buffer
+      input += c;                // Append character to the input string
     }
   }
 }
 
-// ===== Process received serial line =====
-void processInput(String line) {
-  line.trim(); // Remove leading/trailing whitespace
-  if (line.length() == 0) return;  // Ignore empty lines
+// ====== Function to parse the string into angles ======
+void parseAngles(String line) {
+  int idx = 0;   // Index of the next comma
+  int last = 0;  // Start position of the current number
 
-  // Array to store 6 angles for the servos
-  int angles[6] = {90,90,90,90,90,90};
-  int index = 0;
-
-  // ===== Split line by commas =====
-  // Example input: "90,120,45,60,180,30"
-  int lastComma = -1;
-  for (int i = 0; i < line.length(); i++) {
-    // Check for comma or end of line
-    if (line[i] == ',' || i == line.length() - 1) {
-      int start = lastComma + 1;
-      int end = (i == line.length() - 1) ? i+1 : i;
-      String numStr = line.substring(start, end); // Extract substring
-      numStr.trim();                               // Remove whitespace
-      angles[index] = constrain(numStr.toInt(), minAngle, maxAngle); // Convert to int and constrain
-      index++;
-      lastComma = i;
-      if (index >= 6) break; // Only 6 angles expected
+  for (int i = 0; i < 6; i++) {           // Loop for all 6 servos
+    idx = line.indexOf(',', last);         // Find the next comma
+    if (idx == -1 && i < 5) return;       // Invalid data if comma is missing before the last number
+    if (i == 5) {
+      angles[i] = line.substring(last).toInt(); // Last number (no comma at the end)
+    } else {
+      angles[i] = line.substring(last, idx).toInt(); // Extract number between commas
     }
+    last = idx + 1;                        // Update start position for the next number
   }
 
-  // ===== Move Servos =====
-  servo1.write(angles[0]);
-  servo2.write(angles[1]);
-  servo3.write(angles[2]);
-  servo4.write(angles[3]);
-  servo5.write(angles[4]);
-  servo6.write(angles[5]);
+  // ====== Move the servos ======
+  s1.write(angles[0]);
+  s2.write(angles[1]);
+  s3.write(angles[2]);
+  s4.write(angles[3]);
+  s5.write(angles[4]);
+  s6.write(angles[5]);
 
-  // ===== Debug Output =====
-  // Print the angles to Serial Monitor
-  Serial.print("Moved to: ");
-  for (int i = 0; i < 6; i++) {
-    Serial.print(angles[i]);
-    if (i < 5) Serial.print(",");
-  }
-  Serial.println();
-
-  // Print the angles back to Bluetooth
-  BT.print("Moved to: ");
-  for (int i = 0; i < 6; i++) {
-    BT.print(angles[i]);
-    if (i < 5) BT.print(",");
-  }
-  BT.println();
+  // ====== Send feedback to both USB and Bluetooth ======
+  Serial.print("OK: ");  Serial.println(line);  
+  BT.print("OK: ");      BT.println(line);      
 }
